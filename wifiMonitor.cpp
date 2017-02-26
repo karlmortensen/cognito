@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <wiringPi.h>
 #include "pinout.hpp"
+#include <pthread.h>
+
 // When the pin is pulled low, the wifi is on. When the pin is high, it's off.
 enum wifiState
 {
@@ -12,6 +14,7 @@ enum wifiState
 };
 
 wifiState valueChanged = WIFI_OFF;
+bool endThreads = false;
 
 void setWifiAndLights(wifiState setting)
 {
@@ -45,7 +48,7 @@ void myInterrupt(void)
 }
 
 void withInterrupts(wifiState oldValue)
-{ // turns out there is some sort of timing issue with the interrupts... using poling instead
+{ // turns out there is some sort of timing issue with the interrupts... using polling instead
 	valueChanged = oldValue;
 	wiringPiISR(WIFI_A, INT_EDGE_BOTH, &myInterrupt);
 	while(1)
@@ -60,11 +63,15 @@ void withInterrupts(wifiState oldValue)
 	}
 }
 */
-void withoutInterrupts(wifiState initialValue)
+
+void* monitorWifiPolling(void* initialValue)
 {
-	wifiState oldValue = initialValue;
-	wifiState readValue = initialValue;
-	while(1)
+	wifiState* pOldValue = (wifiState*)initialValue;
+	wifiState oldValue = *pOldValue;
+	wifiState readValue = *pOldValue;
+	
+	int x=0;
+	while(!endThreads)
 	{
 		if(oldValue != readValue)
 		{
@@ -74,6 +81,11 @@ void withoutInterrupts(wifiState initialValue)
 		}
 		readValue = (wifiState)digitalRead(WIFI_A);
 		delay(250);
+		printf("reading again\n");
+		if(x++>25) // KDM
+		{
+			endThreads=true;
+		}
 	}
 }
 
@@ -92,7 +104,11 @@ int main()
 	pullUpDnControl(WIFI_A, PUD_UP);
 
 	// withInterrupts((bool)initialValue);
-	withoutInterrupts(initialValue);
+	pthread_t wifiMonitor;
+	pthread_create(&wifiMonitor, NULL, monitorWifiPolling, &initialValue);
+	printf("cows!!!\n");
 	
+	pthread_join(wifiMonitor, NULL);
+	printf("YEAH!!!\n");
 	return 0;	
 }
