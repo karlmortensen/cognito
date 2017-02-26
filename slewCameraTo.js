@@ -32,7 +32,6 @@ var gotoPresetPoint = getPointList.then(function(pointList)
 	{
 		pointToUse = pointList.point4
 	}
-	
     // console.log('Using point: ' + pointToUse);
     // console.log('PTZ Point List:' + JSON.stringify(pointList));
     // Note that ptzGotoPresetPoint's promise is fulfilled as soon as the command is received by the camera. There is no way to block until the camera has finished moving to the location.
