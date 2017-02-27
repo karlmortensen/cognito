@@ -5,7 +5,6 @@
 #include <string.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#include <stdio.h>
 
 /*
  * gcc -I. -o server server.c socket.c

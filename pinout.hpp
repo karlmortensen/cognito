@@ -22,8 +22,8 @@ static const int PUSHBUTTON_A = 11;
 // static const int LIGHT_SENSOR_A = 29; PHYSICAL!
 static const int LIGHT_SENSOR_B = 21;
 
-static const int WIFI_A = 29;
-// static const int WIFI_B = 40; PHYSICAL!
+static const int NETWORK_A = 29;
+// static const int NETWORK_B = 40; PHYSICAL!
 
 // KDM these might change direction, depending upon how I fabricate the LEDs
 static const int RED_A = 0;
