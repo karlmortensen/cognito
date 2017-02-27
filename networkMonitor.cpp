@@ -124,7 +124,6 @@ void * listenForUdp(void* initialValue)
 	{
 		recv_data_raw(sockfd, recv_buff, &recv_len, BUFFER_LEN, &client_addr, slen);
 		system((std::string("node slewCameraTo.js ") + recv_buff).c_str());
-		printf("Looping for UDP\n");
 	}
 }
 
