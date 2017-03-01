@@ -1,4 +1,4 @@
 #!/bin/bash
 #build.sh
 
-gcc networkMonitor.cpp -o networkMonitor -lwiringPi -lpthread -lstdc++
+gcc networkMonitor.cpp -o cognito -lwiringPi -lpthread -lstdc++

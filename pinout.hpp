@@ -26,8 +26,8 @@ static const int NETWORK_A = 29;
 // static const int NETWORK_B = 40; PHYSICAL!
 
 // KDM these might change direction, depending upon how I fabricate the LEDs
-static const int RED_A = 0;
-static const int RED_B = 1;
+static const int RED_A = 1;
+static const int RED_B = 0;
 
-static const int GREEN_A = 1;
-static const int GREEN_B = 0;
+static const int GREEN_A = 0;
+static const int GREEN_B = 1;
