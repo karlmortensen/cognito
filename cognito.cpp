@@ -140,9 +140,9 @@ void* listenForUdp(void* initialValue)
 	while(!endThreads)
 	{
 		recv_data_raw(sockfd, recv_buff, &recv_len, BUFFER_LEN, &client_addr, slen);
-		// KDM if(allowMessagesToBeReceived)
+		if(allowMessagesToBeReceived)
 		{
-			/*		
+			/* KDM Debug
 			printf("received %d bytes: ", recv_len);
 			for(int i=0; i < recv_len; ++i)
 			{
@@ -152,19 +152,16 @@ void* listenForUdp(void* initialValue)
 			*/			
 			if (recv_len > 1)
 			{
+				// register a keep-alive
+				pthread_mutex_lock(&katimes);
+				keepAliveTimes[recv_buff[0] - 'A'] = std::time(0);
+				pthread_mutex_unlock(&katimes);
+				
 				if (recv_buff[1] == '2')
 				{ // Opcode 2, slew camera to node
-					//KDM system((std::string("node slewCameraTo.js ") + recv_buff[0]).c_str());
 					msg[0] = recv_buff[0];
 					sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
-					system((std::string("echo -n ") + recv_buff[0] + "2\" | sudo alfred -s 64").c_str());
-				}
-				else
-				{ // Opcode 1 (or anything other than 2), register a keep-alive
-					pthread_mutex_lock(&katimes);
-					keepAliveTimes[recv_buff[0] - 'A'] = std::time(0);
-					pthread_mutex_unlock(&katimes);
-					printf("keepalive times = \n\t%d\n\t%d\n\t%d\n\t%d\n", keepAliveTimes[0], keepAliveTimes[1], keepAliveTimes[2], keepAliveTimes[3]);
+					system((std::string("echo -n \"") + recv_buff[0] + "2\" | sudo alfred -s 64").c_str());
 				}
 			}
 			else 
@@ -355,12 +352,11 @@ void* monitorPolling(void* initialValue)
 	{
 		// bulk control the lights from the communication cutoff rocker switch
 		if(oldValue != readValue)
-		{
+		{ // if the rocker switch has changed, 
 			oldValue = readValue;
 			printf("Turning comms %s\n", readValue?"Off":"On");
-			setnetworkAndLights(readValue);
 		}
-		readValue = (networkState)digitalRead(NETWORK_A);
+		setnetworkAndLights(readValue);
 
 		currentTime = std::time(0);			
 		if(id == A)
@@ -412,7 +408,8 @@ void* monitorPolling(void* initialValue)
 				}	
 			}
 		}			
-		usleep(1000);		
+		usleep(1000);
+		readValue = (networkState)digitalRead(NETWORK_A);
 	}
 }
 
@@ -448,7 +445,7 @@ int main()
 
 	pthread_t udpMonitor;
 
-// KDM put this back!!!	if(id == B)
+// KDM put this back when done integrating!!!	if(id == B)
 	{ // UDP listener for Android phone
 		printf("Running profile B\n");
 		
