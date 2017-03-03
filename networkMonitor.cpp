@@ -12,14 +12,18 @@
 #include <fstream>
 #include <ctime>
 
-char SERVER_IP[] = "192.168.86.89";
-//KDM char SERVER_IP[] = "192.168.42.217";
 unsigned short ANDROID_SERVER_PORT = 5555;
+unsigned short NODE_JS_LISTENING_PORT = 7777;
+char LOCAL_ADDRESS[]="127.0.0.1";
 const unsigned int BUFFER_LEN = 512;
 bool allowMessagesToBeReceived = true;
 unsigned int keepAliveTimes[4];
 pthread_mutex_t katimes;
 unsigned int TOLERANCE = 3;
+unsigned int MD_STANDOFF_TIME = 1;
+unsigned int PB_STANDOFF_TIME = 1;
+unsigned int LS_STANDOFF_TIME = 1;
+
 std::string id;
 std::string A="A";
 std::string B="B";
@@ -82,16 +86,6 @@ int bind_socket(int sockfd, struct sockaddr_in *addr)
 	return (0);
 }
 
-int send_data_raw(int sockfd, char buffer[], unsigned int buffer_length, struct sockaddr_in *addr, const socklen_t slen)
-{
-	if (sendto(sockfd, buffer, buffer_length, 0, (struct sockaddr *)addr, slen) < 0) 
-	{
-		fprintf(stderr, "sendto() failed\n");
-		return (-1);
-	}
-	return (0);
-}
-
 int recv_data_raw(int sockfd, char buffer[], int *recv_len, unsigned int buffer_length, struct sockaddr_in *addr, socklen_t slen)
 {
 	memset(buffer, 0, buffer_length);
@@ -112,11 +106,19 @@ void* listenForUdp(void* initialValue)
 	struct sockaddr_in server_addr;
 	struct sockaddr_in client_addr;
 	const socklen_t slen = sizeof(struct sockaddr_in);
-
 	char recv_buff[BUFFER_LEN] = { 0 };
 	int recv_len = 0;
-	char send_buff[BUFFER_LEN] = { 0 };
+	int sending_sockfd = 0;
+	struct sockaddr_in sending_client_addr;
+	const socklen_t sending_slen = sizeof(struct sockaddr_in);
+	char msg[] = "A";
 
+	/// Setup socket
+	if ((setup_socket(&sending_sockfd) < 0) || setup_sockaddr_in(&sending_client_addr, &NODE_JS_LISTENING_PORT, LOCAL_ADDRESS) == NULL)
+	{
+		printf("UDP listener can't talk to node.js\n");
+	}
+		
 	/// Setup socket
 	if (setup_socket(&sockfd) < 0) 
 	{
@@ -124,7 +126,7 @@ void* listenForUdp(void* initialValue)
 	}
 
 	/// Setup server addr struct
-	if (setup_sockaddr_in(&server_addr, &port, SERVER_IP) == NULL)
+	if (setup_sockaddr_in(&server_addr, &port, NULL) == NULL)
 	{
 		return NULL;
 	}
@@ -138,26 +140,27 @@ void* listenForUdp(void* initialValue)
 	while(!endThreads)
 	{
 		recv_data_raw(sockfd, recv_buff, &recv_len, BUFFER_LEN, &client_addr, slen);
-		if(allowMessagesToBeReceived)
+		// KDM if(allowMessagesToBeReceived)
 		{
-			/*
+			/*		
 			printf("received %d bytes: ", recv_len);
 			for(int i=0; i < recv_len; ++i)
 			{
 				printf("0x%02X ", recv_buff[i]);
 			}
 			printf("\n");
-			*/
+			*/			
 			if (recv_len > 1)
 			{
-				if (recv_buff[1] != '2') //KDM
+				if (recv_buff[1] == '2')
 				{ // Opcode 2, slew camera to node
 					//KDM system((std::string("node slewCameraTo.js ") + recv_buff[0]).c_str());
-					printf("would have run: %s\n",(std::string("node slewCameraTo.js ") + recv_buff[0]).c_str());
+					msg[0] = recv_buff[0];
+					sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
+					system((std::string("echo -n ") + recv_buff[0] + "2\" | sudo alfred -s 64").c_str());
 				}
 				else
 				{ // Opcode 1 (or anything other than 2), register a keep-alive
-					// printf("just got a keepalive for 0x%02X\n", recv_buff[0]);
 					pthread_mutex_lock(&katimes);
 					keepAliveTimes[recv_buff[0] - 'A'] = std::time(0);
 					pthread_mutex_unlock(&katimes);
@@ -176,9 +179,7 @@ void setnetworkAndLights(networkState setting)
 {
 	if (setting == NETWORK_ON)
 	{
-		//system("sudo ip link set wlan0 up");
 		allowMessagesToBeReceived = true;
-		// KDM note this should be saved for when we get a packet from that link. This is just an example
 		unsigned int currentTime = std::time(0);
 		pthread_mutex_lock(&katimes);
 
@@ -320,7 +321,6 @@ void setnetworkAndLights(networkState setting)
 	}
 	else
 	{
-		// system("sudo ip link set wlan0 down");
 		allowMessagesToBeReceived = false;
 		digitalWrite(EARLY_LED_A, RED_A);
 		digitalWrite(EARLY_LED_B, RED_B);
@@ -331,24 +331,88 @@ void setnetworkAndLights(networkState setting)
 	}
 }
 
-void* monitornetworkPolling(void* initialValue)
+void* monitorPolling(void* initialValue)
 {
 	networkState* pOldValue = (networkState*)initialValue;
 	networkState oldValue = *pOldValue;
 	networkState readValue = *pOldValue;
-	
-	int x=0;
+	unsigned int currentTime = std::time(0); 
+	unsigned int mdLastTriggered = 0;
+	unsigned int pbLastTriggered = 0;
+	unsigned int lsLastTriggered = 0;
+	int sending_sockfd = 0;
+	struct sockaddr_in sending_client_addr;
+	const socklen_t sending_slen = sizeof(struct sockaddr_in);
+	char msg[] = "A";
+
+	/// Setup socket
+	if ((setup_socket(&sending_sockfd) < 0) || setup_sockaddr_in(&sending_client_addr, &NODE_JS_LISTENING_PORT, LOCAL_ADDRESS) == NULL)
+	{
+		printf("Monitor polling can't talk to node.js\n");
+	}
+		
 	while(!endThreads)
 	{
-		// bulk control the lights
+		// bulk control the lights from the communication cutoff rocker switch
 		if(oldValue != readValue)
 		{
 			oldValue = readValue;
-			printf("Setting network to %s\n", readValue?"Off":"On");
+			printf("Turning comms %s\n", readValue?"Off":"On");
 			setnetworkAndLights(readValue);
 		}
 		readValue = (networkState)digitalRead(NETWORK_A);
-		usleep(200000);		
+
+		currentTime = std::time(0);			
+		if(id == A)
+		{ // Motion detector
+			if((currentTime - mdLastTriggered) > MD_STANDOFF_TIME)
+			{
+				if(digitalRead(MOTION_SENSOR_DATA))
+				{
+					mdLastTriggered = currentTime;
+					// Slew Camera
+					msg[0] = 'A';
+					sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
+					
+					// Inform rest of network
+					system("echo -n \"A2\" | sudo alfred -s 64");
+				}
+			}	
+		}
+		// skip id == B, as it has it's own UDP listening thread
+		else if(id == C)
+		{ // Button press
+			if((currentTime - pbLastTriggered) > PB_STANDOFF_TIME)
+			{
+				if(!digitalRead(PUSHBUTTON_A))
+				{
+					pbLastTriggered = currentTime;
+					// Slew Camera
+					msg[0] = 'C';
+					sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
+					
+					// Inform rest of network
+					system("echo -n \"C2\" | sudo alfred -s 64");
+				}	
+			}
+		}
+		else if(id == D)
+		{ // Light sensor
+			if((currentTime - lsLastTriggered) > LS_STANDOFF_TIME)
+			{
+				if(digitalRead(LIGHT_SENSOR_B))
+				{
+					lsLastTriggered = currentTime;
+					// Slew Camera
+					msg[0] = 'D';
+					sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
+					
+					// Inform rest of network
+					system("echo -n \"D2\" | sudo alfred -s 64");
+				}	
+			}
+		}			
+		usleep(1000);		
 	}
 }
 
@@ -370,44 +434,36 @@ int main()
 	pinMode(MIDDLE_LED_B, OUTPUT);
 	pinMode(LATE_LED_A, OUTPUT);
 	pinMode(LATE_LED_B, OUTPUT);
+	pinMode(PUSHBUTTON_A, INPUT);
+	pullUpDnControl(PUSHBUTTON_A, PUD_UP);
+	
 	networkState initialValue = (networkState)digitalRead(NETWORK_A);
-
+	
 	setnetworkAndLights(initialValue);
 	pullUpDnControl(NETWORK_A, PUD_UP);
 
-	pthread_t networkMonitor;
-	pthread_create(&networkMonitor, NULL, monitornetworkPolling, &initialValue);
-	printf("Started network monitor\n");
+	pthread_t pollingMonitor;
+	pthread_create(&pollingMonitor, NULL, monitorPolling, &initialValue);
+	printf("Started polling monitor\n");
 
-	if(id == A)
-	{ // Motion detector
-		printf("Running profile A\n");
-	}
-	else if(id == B)
+	pthread_t udpMonitor;
+
+// KDM put this back!!!	if(id == B)
 	{ // UDP listener for Android phone
 		printf("Running profile B\n");
-		pthread_t udpMonitor;
+		
 		unsigned int port = ANDROID_SERVER_PORT;
 		pthread_create(&udpMonitor, NULL, listenForUdp, &port);
 		printf("Started UDP monitor\n");
 	}
-	else if(id == C)
-	{ // Button press
-		printf("Running profile C\n");
-	}
-	else if(id == D)
-	{ // Light sensor
-		printf("Running profile D\n");
-	}
-	else
-	{
-		printf("No personality profile!\n");
-		return 0;
-	}
 	
-	pthread_join(networkMonitor, NULL);
-	// pthread_join(udpMonitor, NULL);
-	printf("YEAH!!!\n");
+	pthread_join(pollingMonitor, NULL);
+	
+	if(id == B)
+	{
+		pthread_join(udpMonitor, NULL);
+	}
+	printf("All done\n");
 
 	return 0;	
 }
