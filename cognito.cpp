@@ -308,7 +308,7 @@ void* listenForUdp(void* initialValue)
 						}
 					}
 					else
-					{ // if it's from android
+					{ // if it's from Android
 						blinkInService(GREEN_A, GREEN_B);
 					}
 				}
@@ -559,7 +559,7 @@ void* monitorPolling(void* initialValue)
 		{ // Button press
 			if((currentTime - pbLastTriggered) > PB_STANDOFF_TIME)
 			{
-				if(!digitalRead(PUSHBUTTON_A))
+				if(digitalRead(PUSHBUTTON_A))
 				{
 					pbLastTriggered = currentTime;
 					// Slew Camera
@@ -577,7 +577,7 @@ void* monitorPolling(void* initialValue)
 		{ // Light sensor
 			if((currentTime - lsLastTriggered) > LS_STANDOFF_TIME)
 			{
-				if(digitalRead(LIGHT_SENSOR_B))
+				if(!digitalRead(LIGHT_SENSOR_B))
 				{
 					lsLastTriggered = currentTime;
 					// Slew Camera
@@ -616,47 +616,30 @@ int main()
 	pinMode(LATE_LED_A, OUTPUT);
 	pinMode(LATE_LED_B, OUTPUT);
 	pinMode(PUSHBUTTON_A, INPUT);
-	pullUpDnControl(PUSHBUTTON_A, PUD_UP);
 	
 	blinkAll(RED_A, RED_B);
 	blinkAll(GREEN_A, GREEN_B);
-	/*
-	blink(EARLY_LED_A, EARLY_LED_B, GREEN_A, GREEN_B);
-	blink(MIDDLE_LED_A, MIDDLE_LED_B, GREEN_A, GREEN_B);
-	blink(LATE_LED_A, LATE_LED_B, GREEN_A, GREEN_B);
-
-	blink(EARLY_LED_A, EARLY_LED_B, RED_A, RED_B);
-	blink(MIDDLE_LED_A, MIDDLE_LED_B, RED_A, RED_B);
-	blink(LATE_LED_A, LATE_LED_B, RED_A, RED_B);
-	*/
 		
 	networkState initialValue = (networkState)digitalRead(NETWORK_A);
 	
 	setnetworkAndLights(initialValue);
 	pullUpDnControl(NETWORK_A, PUD_UP);
-	pullUpDnControl(MOTION_SENSOR_DATA, PUD_DOWN);
+	pullUpDnControl(PUSHBUTTON_A, PUD_UP);
+	pullUpDnControl(LIGHT_SENSOR_B, PUD_UP);
+	//KDM pullUpDnControl(MOTION_SENSOR_DATA, PUD_UP); // Not sure we should pull this either way.
 
 	pthread_t pollingMonitor;
 	pthread_create(&pollingMonitor, NULL, monitorPolling, &initialValue);
 	printf("Started polling monitor\n");
 
+	// UDP listener
+	unsigned int port = ANDROID_SERVER_PORT;
 	pthread_t udpMonitor;
-
-// KDM put this back when done integrating!!!	if(id == B)
-	{ // UDP listener for Android phone
-		printf("Running profile B\n");
-		
-		unsigned int port = ANDROID_SERVER_PORT;
-		pthread_create(&udpMonitor, NULL, listenForUdp, &port);
-		printf("Started UDP monitor\n");
-	}
+	pthread_create(&udpMonitor, NULL, listenForUdp, &port);
+	printf("Started UDP monitor\n");
 	
 	pthread_join(pollingMonitor, NULL);
-	
-	if(id == B)
-	{
-		pthread_join(udpMonitor, NULL);
-	}
+	pthread_join(udpMonitor, NULL);
 	printf("All done\n");
 
 	return 0;	

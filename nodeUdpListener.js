@@ -1,3 +1,4 @@
+// Note you MUST run nodejs nodeUdpListener.js prior to running sudo ./cognito or it will not work.
 var PORT = 7777;
 var HOST = 'localhost';
 
@@ -17,7 +18,6 @@ var dgram = require('dgram');
 var server = dgram.createSocket('udp4');
 var getPointList = camera.getPTZPresetPointList(); // Get saved presets on the camera
 server.on('listening', function () {
-
 	var address = server.address();
     console.log('UDP Server listening on ' + address.address + ":" + address.port);
 });
