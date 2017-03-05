@@ -15,7 +15,6 @@ var camera = new Foscam({
 
 var dgram = require('dgram');
 var server = dgram.createSocket('udp4');
-var getPointList;
 var getPointList = camera.getPTZPresetPointList(); // Get saved presets on the camera
 server.on('listening', function () {
 
