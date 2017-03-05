@@ -14,15 +14,20 @@
 
 unsigned short ANDROID_SERVER_PORT = 5555;
 unsigned short NODE_JS_LISTENING_PORT = 7777;
+unsigned int LOCALHOST = 16777343;
 char LOCAL_ADDRESS[]="127.0.0.1";
+char ANY_ADDRESS[]="0.0.0.0";
 const unsigned int BUFFER_LEN = 512;
 bool allowMessagesToBeReceived = true;
 unsigned int keepAliveTimes[4];
+bool lightStatus[3];
 pthread_mutex_t katimes;
 unsigned int TOLERANCE = 3;
 unsigned int MD_STANDOFF_TIME = 1;
 unsigned int PB_STANDOFF_TIME = 1;
 unsigned int LS_STANDOFF_TIME = 1;
+unsigned int BLINK_STANDOFF = 2;
+unsigned int doNotHandleKeepAlivesUntil = 0;
 
 std::string id;
 std::string A="A";
@@ -37,8 +42,118 @@ enum networkState
 	NETWORK_OFF = 1
 };
 
+enum lightSettings
+{
+	OFF = 0,
+	ON = 1
+};
+
+enum light
+{
+	EARLY = 0,
+	MIDDLE = 1,
+	LATE = 2
+};
+
 networkState valueChanged = NETWORK_OFF;
 bool endThreads = false;
+
+/*
+ * ledA is the first leg of the LED
+ * ledB is the second leg of the LED
+ * colorA is the color
+ * colorB is the color (differential)
+ */
+void blink(int ledA, int ledB, int colorA, int colorB)
+{
+	digitalWrite(ledA, colorA);				
+	digitalWrite(ledB, colorB);
+	usleep(200000);
+	digitalWrite(ledA, colorB);			
+	usleep(175000);
+	digitalWrite(ledA, colorA);
+	usleep(200000);
+	digitalWrite(ledA, colorB);			
+	usleep(175000);
+	digitalWrite(ledA, colorA);
+	usleep(200000);
+	digitalWrite(ledA, colorB);			
+	usleep(175000);
+	digitalWrite(ledA, colorA);
+}
+
+void blinkAll(int colorA, int colorB)
+{
+	digitalWrite(EARLY_LED_A,  colorA);				
+	digitalWrite(EARLY_LED_B,  colorB);
+	digitalWrite(MIDDLE_LED_A, colorA);				
+	digitalWrite(MIDDLE_LED_B, colorB);
+	digitalWrite(LATE_LED_A,   colorA);				
+	digitalWrite(LATE_LED_B,   colorB);
+	usleep(200000);
+	digitalWrite(EARLY_LED_A,  colorB);				
+	digitalWrite(MIDDLE_LED_A, colorB);				
+	digitalWrite(LATE_LED_A,   colorB);				
+	usleep(175000);
+	digitalWrite(EARLY_LED_A,  colorA);				
+	digitalWrite(MIDDLE_LED_A, colorA);				
+	digitalWrite(LATE_LED_A,   colorA);				
+	usleep(200000);
+	digitalWrite(EARLY_LED_A,  colorB);				
+	digitalWrite(MIDDLE_LED_A, colorB);				
+	digitalWrite(LATE_LED_A,   colorB);				
+	usleep(175000);
+	digitalWrite(EARLY_LED_A,  colorA);				
+	digitalWrite(MIDDLE_LED_A, colorA);				
+	digitalWrite(LATE_LED_A,   colorA);				
+	usleep(200000);
+	digitalWrite(EARLY_LED_A,  colorB);				
+	digitalWrite(MIDDLE_LED_A, colorB);				
+	digitalWrite(LATE_LED_A,   colorB);				
+}
+
+					
+void blinkInService(int colorA, int colorB)
+{
+	if(lightStatus[EARLY] || lightStatus[MIDDLE] || lightStatus[LATE])
+	{
+		if(lightStatus[EARLY])
+		{
+			digitalWrite(EARLY_LED_A,  colorA);				
+			digitalWrite(EARLY_LED_B,  colorB);
+		}
+		if(lightStatus[MIDDLE])
+		{
+			digitalWrite(MIDDLE_LED_A, colorA);				
+			digitalWrite(MIDDLE_LED_B, colorB);
+		}
+		if(lightStatus[LATE]) 
+		{
+			digitalWrite(LATE_LED_A,   colorA);				
+			digitalWrite(LATE_LED_B,   colorB);
+		}
+		usleep(200000);
+		if(lightStatus[EARLY]) digitalWrite(EARLY_LED_A,  colorB);				
+		if(lightStatus[MIDDLE]) digitalWrite(MIDDLE_LED_A, colorB);				
+		if(lightStatus[LATE]) digitalWrite(LATE_LED_A,   colorB);				
+		usleep(175000);
+		if(lightStatus[EARLY]) digitalWrite(EARLY_LED_A,  colorA);				
+		if(lightStatus[MIDDLE]) digitalWrite(MIDDLE_LED_A, colorA);				
+		if(lightStatus[LATE]) digitalWrite(LATE_LED_A,   colorA);				
+		usleep(200000);
+		if(lightStatus[EARLY]) digitalWrite(EARLY_LED_A,  colorB);				
+		if(lightStatus[MIDDLE]) digitalWrite(MIDDLE_LED_A, colorB);				
+		if(lightStatus[LATE]) digitalWrite(LATE_LED_A,   colorB);				
+		usleep(175000);
+		if(lightStatus[EARLY]) digitalWrite(EARLY_LED_A,  colorA);				
+		if(lightStatus[MIDDLE]) digitalWrite(MIDDLE_LED_A, colorA);				
+		if(lightStatus[LATE]) digitalWrite(LATE_LED_A,   colorA);				
+		usleep(200000);
+		if(lightStatus[EARLY]) digitalWrite(EARLY_LED_A,  colorB);				
+		if(lightStatus[MIDDLE]) digitalWrite(MIDDLE_LED_A, colorB);				
+		if(lightStatus[LATE]) digitalWrite(LATE_LED_A,   colorB);				
+	}
+}
 
 int setup_socket(int *sockfd)
 {
@@ -114,7 +229,7 @@ void* listenForUdp(void* initialValue)
 	char msg[] = "A";
 
 	/// Setup socket
-	if ((setup_socket(&sending_sockfd) < 0) || setup_sockaddr_in(&sending_client_addr, &NODE_JS_LISTENING_PORT, LOCAL_ADDRESS) == NULL)
+	if ((setup_socket(&sending_sockfd) < 0) || setup_sockaddr_in(&sending_client_addr, &NODE_JS_LISTENING_PORT, ANY_ADDRESS) == NULL)
 	{
 		printf("UDP listener can't talk to node.js\n");
 	}
@@ -149,7 +264,7 @@ void* listenForUdp(void* initialValue)
 				printf("0x%02X ", recv_buff[i]);
 			}
 			printf("\n");
-			*/			
+			*/
 			if (recv_len > 1)
 			{
 				// register a keep-alive
@@ -159,9 +274,43 @@ void* listenForUdp(void* initialValue)
 				
 				if (recv_buff[1] == '2')
 				{ // Opcode 2, slew camera to node
+					doNotHandleKeepAlivesUntil = std::time(0) + BLINK_STANDOFF;
 					msg[0] = recv_buff[0];
 					sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
 					system((std::string("echo -n \"") + recv_buff[0] + "2\" | sudo alfred -s 64").c_str());
+					// blink all lights in service in send mode
+					if(client_addr.sin_addr.s_addr == LOCALHOST)
+					{  // if it's from localhost
+						printf("recieved from %c\n",recv_buff[0]);
+						if(recv_buff[0] == 'A')
+						{
+							if(id == B)blink(EARLY_LED_A, EARLY_LED_B, GREEN_A, GREEN_B);
+							else if(id == C)blink(MIDDLE_LED_A, MIDDLE_LED_B, GREEN_A, GREEN_B);
+							else if(id == D)blink(LATE_LED_A, LATE_LED_B, GREEN_A, GREEN_B);
+						}
+						else if(recv_buff[0] == 'B')
+						{
+							if(id == C)blink(EARLY_LED_A, EARLY_LED_B, GREEN_A, GREEN_B);
+							else if(id == D)blink(MIDDLE_LED_A, MIDDLE_LED_B, GREEN_A, GREEN_B);
+							else if(id == A)blink(LATE_LED_A, LATE_LED_B, GREEN_A, GREEN_B);
+						}
+						else if(recv_buff[0] == 'C')
+						{
+							if(id == D)blink(EARLY_LED_A, EARLY_LED_B, GREEN_A, GREEN_B);
+							else if(id == A)blink(MIDDLE_LED_A, MIDDLE_LED_B, GREEN_A, GREEN_B);
+							else if(id == B)blink(LATE_LED_A, LATE_LED_B, GREEN_A, GREEN_B);
+						}
+						else if(recv_buff[0] == 'D')
+						{
+							if(id == C)blink(EARLY_LED_A, EARLY_LED_B, GREEN_A, GREEN_B);
+							else if(id == B)blink(MIDDLE_LED_A, MIDDLE_LED_B, GREEN_A, GREEN_B);
+							else if(id == A)blink(LATE_LED_A, LATE_LED_B, GREEN_A, GREEN_B);
+						}
+					}
+					else
+					{ // if it's from android
+						blinkInService(GREEN_A, GREEN_B);
+					}
 				}
 			}
 			else 
@@ -179,146 +328,174 @@ void setnetworkAndLights(networkState setting)
 		allowMessagesToBeReceived = true;
 		unsigned int currentTime = std::time(0);
 		pthread_mutex_lock(&katimes);
-
-		if(id == A)
-		{ // Motion detector
-			if ((currentTime - keepAliveTimes[1]) < TOLERANCE)
-			{
-				digitalWrite(LATE_LED_A, GREEN_A);				
-				digitalWrite(LATE_LED_B, GREEN_B);
+		if(doNotHandleKeepAlivesUntil < currentTime)
+		{
+			// Handle setting lights based on keep-alives
+			if(id == A)
+			{ // Motion detector
+				if ((currentTime - keepAliveTimes[1]) < TOLERANCE)
+				{
+					digitalWrite(LATE_LED_A, GREEN_A);				
+					digitalWrite(LATE_LED_B, GREEN_B);
+					lightStatus[LATE]=ON;
+				}
+				else
+				{
+					digitalWrite(LATE_LED_A, RED_A);
+					digitalWrite(LATE_LED_B, RED_B);
+					lightStatus[LATE]=OFF;
+				}
+				if ((currentTime - keepAliveTimes[2]) < TOLERANCE)
+				{
+					digitalWrite(MIDDLE_LED_A, GREEN_A);				
+					digitalWrite(MIDDLE_LED_B, GREEN_B);
+					lightStatus[MIDDLE]=ON;
+				}
+				else
+				{
+					digitalWrite(MIDDLE_LED_A, RED_A);
+					digitalWrite(MIDDLE_LED_B, RED_B);
+					lightStatus[MIDDLE]=OFF;
+				}
+				if ((currentTime - keepAliveTimes[3]) < TOLERANCE)
+				{
+					digitalWrite(EARLY_LED_A, GREEN_A);				
+					digitalWrite(EARLY_LED_B, GREEN_B);
+					lightStatus[EARLY]=ON;				
+				}
+				else
+				{
+					digitalWrite(EARLY_LED_A, RED_A);
+					digitalWrite(EARLY_LED_B, RED_B);
+					lightStatus[EARLY]=OFF;
+				}		
 			}
-			else
-			{
-				digitalWrite(LATE_LED_A, RED_A);
-				digitalWrite(LATE_LED_B, RED_B);
+			else if(id == B)
+			{ // UDP listener for Android phone
+				if ((currentTime - keepAliveTimes[0]) < TOLERANCE)
+				{
+					digitalWrite(EARLY_LED_A, GREEN_A);				
+					digitalWrite(EARLY_LED_B, GREEN_B);
+					lightStatus[EARLY]=ON;
+				}
+				else
+				{
+					digitalWrite(EARLY_LED_A, RED_A);
+					digitalWrite(EARLY_LED_B, RED_B);
+					lightStatus[EARLY]=OFF;
+				}
+				if ((currentTime - keepAliveTimes[2]) < TOLERANCE)
+				{
+					digitalWrite(LATE_LED_A, GREEN_A);				
+					digitalWrite(LATE_LED_B, GREEN_B);				
+					lightStatus[LATE]=ON;
+				}
+				else
+				{
+					digitalWrite(LATE_LED_A, RED_A);
+					digitalWrite(LATE_LED_B, RED_B);
+					lightStatus[LATE]=OFF;
+				}
+				if ((currentTime - keepAliveTimes[3]) < TOLERANCE)
+				{
+					digitalWrite(MIDDLE_LED_A, GREEN_A);				
+					digitalWrite(MIDDLE_LED_B, GREEN_B);				
+					lightStatus[MIDDLE]=ON;
+				}
+				else
+				{
+					digitalWrite(MIDDLE_LED_A, RED_A);
+					digitalWrite(MIDDLE_LED_B, RED_B);
+					lightStatus[MIDDLE]=OFF;
+				}		
 			}
-			if ((currentTime - keepAliveTimes[2]) < TOLERANCE)
-			{
-				digitalWrite(MIDDLE_LED_A, GREEN_A);				
-				digitalWrite(MIDDLE_LED_B, GREEN_B);				
+			else if(id == C)
+			{ // Button press
+				if ((currentTime - keepAliveTimes[0]) < TOLERANCE)
+				{
+					digitalWrite(MIDDLE_LED_A, GREEN_A);				
+					digitalWrite(MIDDLE_LED_B, GREEN_B);
+					lightStatus[MIDDLE]=ON;
+				}
+				else
+				{
+					digitalWrite(MIDDLE_LED_A, RED_A);
+					digitalWrite(MIDDLE_LED_B, RED_B);
+					lightStatus[MIDDLE]=OFF;
+				}
+				if ((currentTime - keepAliveTimes[1]) < TOLERANCE)
+				{
+					digitalWrite(EARLY_LED_A, GREEN_A);				
+					digitalWrite(EARLY_LED_B, GREEN_B);				
+					lightStatus[EARLY]=ON;
+				}
+				else
+				{
+					digitalWrite(EARLY_LED_A, RED_A);
+					digitalWrite(EARLY_LED_B, RED_B);
+					lightStatus[EARLY]=OFF;
+				}
+				if ((currentTime - keepAliveTimes[3]) < TOLERANCE)
+				{
+					digitalWrite(LATE_LED_A, GREEN_A);				
+					digitalWrite(LATE_LED_B, GREEN_B);				
+					lightStatus[LATE]=ON;
+				}
+				else
+				{
+					digitalWrite(LATE_LED_A, RED_A);
+					digitalWrite(LATE_LED_B, RED_B);
+					lightStatus[LATE]=OFF;
+				}		
 			}
-			else
-			{
-				digitalWrite(MIDDLE_LED_A, RED_A);
-				digitalWrite(MIDDLE_LED_B, RED_B);
+			else if(id == D)
+			{ // Light sensor
+				if ((currentTime - keepAliveTimes[0]) < TOLERANCE)
+				{
+					digitalWrite(LATE_LED_A, GREEN_A);				
+					digitalWrite(LATE_LED_B, GREEN_B);
+					lightStatus[LATE]=ON;
+				}
+				else
+				{
+					digitalWrite(LATE_LED_A, RED_A);
+					digitalWrite(LATE_LED_B, RED_B);
+					lightStatus[LATE]=OFF;
+				}
+				if ((currentTime - keepAliveTimes[1]) < TOLERANCE)
+				{
+					digitalWrite(MIDDLE_LED_A, GREEN_A);				
+					digitalWrite(MIDDLE_LED_B, GREEN_B);				
+					lightStatus[MIDDLE]=ON;
+				}
+				else
+				{
+					digitalWrite(MIDDLE_LED_A, RED_A);
+					digitalWrite(MIDDLE_LED_B, RED_B);
+					lightStatus[MIDDLE]=OFF;
+				}
+				if ((currentTime - keepAliveTimes[2]) < TOLERANCE)
+				{
+					digitalWrite(EARLY_LED_A, GREEN_A);				
+					digitalWrite(EARLY_LED_B, GREEN_B);				
+					lightStatus[EARLY]=ON;
+				}
+				else
+				{
+					digitalWrite(EARLY_LED_A, RED_A);
+					digitalWrite(EARLY_LED_B, RED_B);
+					lightStatus[EARLY]=OFF;
+				}		
 			}
-			if ((currentTime - keepAliveTimes[3]) < TOLERANCE)
-			{
-				digitalWrite(EARLY_LED_A, GREEN_A);				
-				digitalWrite(EARLY_LED_B, GREEN_B);				
-			}
-			else
-			{
-				digitalWrite(EARLY_LED_A, RED_A);
-				digitalWrite(EARLY_LED_B, RED_B);
-			}		
-		}
-		else if(id == B)
-		{ // UDP listener for Android phone
-			if ((currentTime - keepAliveTimes[0]) < TOLERANCE)
-			{
-				printf("%d - %d = %d\n",currentTime, keepAliveTimes[0], (currentTime - keepAliveTimes[0]));
-				digitalWrite(EARLY_LED_A, GREEN_A);				
-				digitalWrite(EARLY_LED_B, GREEN_B);
-			}
-			else
-			{
-				printf("%d - %d = %d\n",currentTime, keepAliveTimes[0], (currentTime - keepAliveTimes[0]));
-				digitalWrite(EARLY_LED_A, RED_A);
-				digitalWrite(EARLY_LED_B, RED_B);
-			}
-			if ((currentTime - keepAliveTimes[2]) < TOLERANCE)
-			{
-				digitalWrite(LATE_LED_A, GREEN_A);				
-				digitalWrite(LATE_LED_B, GREEN_B);				
-			}
-			else
-			{
-				digitalWrite(LATE_LED_A, RED_A);
-				digitalWrite(LATE_LED_B, RED_B);
-			}
-			if ((currentTime - keepAliveTimes[3]) < TOLERANCE)
-			{
-				digitalWrite(MIDDLE_LED_A, GREEN_A);				
-				digitalWrite(MIDDLE_LED_B, GREEN_B);				
-			}
-			else
-			{
-				digitalWrite(MIDDLE_LED_A, RED_A);
-				digitalWrite(MIDDLE_LED_B, RED_B);
-			}		
-		}
-		else if(id == C)
-		{ // Button press
-			if ((currentTime - keepAliveTimes[0]) < TOLERANCE)
-			{
-				digitalWrite(MIDDLE_LED_A, GREEN_A);				
-				digitalWrite(MIDDLE_LED_B, GREEN_B);
-			}
-			else
-			{
-				digitalWrite(MIDDLE_LED_A, RED_A);
-				digitalWrite(MIDDLE_LED_B, RED_B);
-			}
-			if ((currentTime - keepAliveTimes[1]) < TOLERANCE)
-			{
-				digitalWrite(EARLY_LED_A, GREEN_A);				
-				digitalWrite(EARLY_LED_B, GREEN_B);				
-			}
-			else
-			{
-				digitalWrite(EARLY_LED_A, RED_A);
-				digitalWrite(EARLY_LED_B, RED_B);
-			}
-			if ((currentTime - keepAliveTimes[3]) < TOLERANCE)
-			{
-				digitalWrite(LATE_LED_A, GREEN_A);				
-				digitalWrite(LATE_LED_B, GREEN_B);				
-			}
-			else
-			{
-				digitalWrite(LATE_LED_A, RED_A);
-				digitalWrite(LATE_LED_B, RED_B);
-			}		
-		}
-		else if(id == D)
-		{ // Light sensor
-			if ((currentTime - keepAliveTimes[0]) < TOLERANCE)
-			{
-				digitalWrite(LATE_LED_A, GREEN_A);				
-				digitalWrite(LATE_LED_B, GREEN_B);
-			}
-			else
-			{
-				digitalWrite(LATE_LED_A, RED_A);
-				digitalWrite(LATE_LED_B, RED_B);
-			}
-			if ((currentTime - keepAliveTimes[1]) < TOLERANCE)
-			{
-				digitalWrite(MIDDLE_LED_A, GREEN_A);				
-				digitalWrite(MIDDLE_LED_B, GREEN_B);				
-			}
-			else
-			{
-				digitalWrite(MIDDLE_LED_A, RED_A);
-				digitalWrite(MIDDLE_LED_B, RED_B);
-			}
-			if ((currentTime - keepAliveTimes[2]) < TOLERANCE)
-			{
-				digitalWrite(EARLY_LED_A, GREEN_A);				
-				digitalWrite(EARLY_LED_B, GREEN_B);				
-			}
-			else
-			{
-				digitalWrite(EARLY_LED_A, RED_A);
-				digitalWrite(EARLY_LED_B, RED_B);
-			}		
 		}
 		pthread_mutex_unlock(&katimes);
 	}
 	else
 	{
 		allowMessagesToBeReceived = false;
+		lightStatus[EARLY] = OFF;
+		lightStatus[MIDDLE] = OFF;
+		lightStatus[LATE] = OFF;
 		digitalWrite(EARLY_LED_A, RED_A);
 		digitalWrite(EARLY_LED_B, RED_B);
 		digitalWrite(MIDDLE_LED_A, RED_A);
@@ -372,6 +549,8 @@ void* monitorPolling(void* initialValue)
 					
 					// Inform rest of network
 					system("echo -n \"A2\" | sudo alfred -s 64");
+					doNotHandleKeepAlivesUntil = std::time(0) + BLINK_STANDOFF;
+					blinkInService(GREEN_A, GREEN_B);
 				}
 			}	
 		}
@@ -389,6 +568,8 @@ void* monitorPolling(void* initialValue)
 					
 					// Inform rest of network
 					system("echo -n \"C2\" | sudo alfred -s 64");
+					doNotHandleKeepAlivesUntil = std::time(0) + BLINK_STANDOFF;
+					blinkInService(GREEN_A, GREEN_B);
 				}	
 			}
 		}
@@ -405,6 +586,8 @@ void* monitorPolling(void* initialValue)
 					
 					// Inform rest of network
 					system("echo -n \"D2\" | sudo alfred -s 64");
+					doNotHandleKeepAlivesUntil = std::time(0) + BLINK_STANDOFF;
+					blinkInService(GREEN_A, GREEN_B);
 				}	
 			}
 		}			
@@ -412,6 +595,7 @@ void* monitorPolling(void* initialValue)
 		readValue = (networkState)digitalRead(NETWORK_A);
 	}
 }
+
 
 int main()
 {
@@ -434,10 +618,23 @@ int main()
 	pinMode(PUSHBUTTON_A, INPUT);
 	pullUpDnControl(PUSHBUTTON_A, PUD_UP);
 	
+	blinkAll(RED_A, RED_B);
+	blinkAll(GREEN_A, GREEN_B);
+	/*
+	blink(EARLY_LED_A, EARLY_LED_B, GREEN_A, GREEN_B);
+	blink(MIDDLE_LED_A, MIDDLE_LED_B, GREEN_A, GREEN_B);
+	blink(LATE_LED_A, LATE_LED_B, GREEN_A, GREEN_B);
+
+	blink(EARLY_LED_A, EARLY_LED_B, RED_A, RED_B);
+	blink(MIDDLE_LED_A, MIDDLE_LED_B, RED_A, RED_B);
+	blink(LATE_LED_A, LATE_LED_B, RED_A, RED_B);
+	*/
+		
 	networkState initialValue = (networkState)digitalRead(NETWORK_A);
 	
 	setnetworkAndLights(initialValue);
 	pullUpDnControl(NETWORK_A, PUD_UP);
+	pullUpDnControl(MOTION_SENSOR_DATA, PUD_DOWN);
 
 	pthread_t pollingMonitor;
 	pthread_create(&pollingMonitor, NULL, monitorPolling, &initialValue);
