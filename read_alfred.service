@@ -1,0 +1,12 @@
+[Unit]
+Description=read_alfred
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/read_alfred.conf
+ExecStart=/usr/bin/read_alfred -o ${HOST} -p ${PORT}
+KillMode=process
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
