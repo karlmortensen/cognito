@@ -1,6 +1,8 @@
 #!/bin/bash
 #start.sh
 
-./build.sh
+sudo ./killit.sh
+
+#./build.sh
 nodejs nodeUdpListener.js &
 sudo ./cognito &

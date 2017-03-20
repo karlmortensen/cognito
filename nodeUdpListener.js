@@ -6,7 +6,7 @@ var Foscam = require('foscam-client');
 var camera = new Foscam({
   username: 'kmort',
   password: 'password,7',
-  host: '192.168.42.42',
+  host: '192.168.42.110',
   port: 88, // default
   protocol: 'http', // default
   rejectUnauthorizedCerts: true // default

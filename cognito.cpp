@@ -30,6 +30,7 @@ unsigned int KEEPALIVE_STANDOFF_TIME = 2;
 unsigned int BLINK_STANDOFF = 2;
 unsigned int doNotHandleKeepAlivesUntil = 0;
 
+char id_msg[2];
 std::string id;
 std::string A="A";
 std::string B="B";
@@ -227,7 +228,7 @@ void* listenForUdp(void* initialValue)
   int sending_sockfd = 0;
   struct sockaddr_in sending_client_addr;
   const socklen_t sending_slen = sizeof(struct sockaddr_in);
-  char msg[] = "A";
+  char msg[] = "Y";
 
   /// Setup socket
   if ((setup_socket(&sending_sockfd) < 0) || setup_sockaddr_in(&sending_client_addr, &NODE_JS_LISTENING_PORT, ANY_ADDRESS) == NULL)
@@ -258,14 +259,14 @@ void* listenForUdp(void* initialValue)
     recv_data_raw(sockfd, recv_buff, &recv_len, BUFFER_LEN, &client_addr, slen);
     if(allowMessagesToBeReceived)
     {
-      /* KDM Debug
+      /* KDM Debug */
       printf("received %d bytes: ", recv_len);
       for(int i=0; i < recv_len; ++i)
       {
         printf("0x%02X ", recv_buff[i]);
       }
       printf("\n");
-      */
+      /**/
       if (recv_len > 1)
       {
         // register a keep-alive
@@ -277,6 +278,8 @@ void* listenForUdp(void* initialValue)
         { // Opcode 2, slew camera to node
           doNotHandleKeepAlivesUntil = std::time(0) + BLINK_STANDOFF;
           msg[0] = recv_buff[0];
+          printf("listen for UDP recieved a %c\n", msg[0]); // KDM
+
           sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
           system((std::string("echo -n \"") + recv_buff[0] + "2\" | sudo alfred -s 64").c_str());
           // blink all lights in service in send mode
@@ -519,7 +522,7 @@ void* monitorPolling(void* initialValue)
   int sending_sockfd = 0;
   struct sockaddr_in sending_client_addr;
   const socklen_t sending_slen = sizeof(struct sockaddr_in);
-  char msg[] = "A";
+  char msg[] = "X";
 
   /// Setup socket
   if ((setup_socket(&sending_sockfd) < 0) || setup_sockaddr_in(&sending_client_addr, &NODE_JS_LISTENING_PORT, LOCAL_ADDRESS) == NULL)
@@ -599,24 +602,25 @@ void* monitorPolling(void* initialValue)
     { // Light sensor
       if((currentTime - lsLastTriggered) > LS_STANDOFF_TIME)
       {
-        if(!digitalRead(LIGHT_SENSOR_B))
+        size_t len = 0;
+        ssize_t read;
+        char *line = NULL;
+        int num;
+        FILE* proc = popen("/home/pi/readAdc /dev/spidev0.0", "r");
+        if (proc)
         {
-          lsLastTriggered = currentTime;
-          // Slew Camera
-          msg[0] = 'D';
-          sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
-
-          // Inform rest of network
-          system("echo -n \"D2\" | sudo alfred -s 64");
-          doNotHandleKeepAlivesUntil = std::time(0) + BLINK_STANDOFF;
-          blinkInService(GREEN_A, GREEN_B);
+          read = getline(&line, &len, proc);
+          if (atoi(line) > 975)
+          {
+            // Slew Camera
+            msg[0] = 'D';
+            sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
+            // Inform rest of network
+            system("echo -n \"D2\" | sudo alfred -s 64");
+            doNotHandleKeepAlivesUntil = std::time(0) + BLINK_STANDOFF;
+            blinkInService(GREEN_A, GREEN_B);
+          }
         }
-      }
-      if((currentTime - keepAliveLastTriggered) > KEEPALIVE_STANDOFF_TIME)
-      {
-        // Send a keepalive
-        system("echo -n \"D1\" | sudo alfred -s 64");
-        keepAliveLastTriggered = currentTime;
       }
     }
     usleep(1000);
@@ -636,6 +640,9 @@ int main()
   pthread_mutex_unlock(&katimes);
   std::ifstream file("id.txt");
   std::getline(file, id);
+  strncpy(id_msg, id.c_str(), 1); // stuff the ID into the variable
+  printf("id is %c\n",id_msg[0]); // KDM
+
   wiringPiSetup();
   pinMode(EARLY_LED_A, OUTPUT);
   pinMode(EARLY_LED_B, OUTPUT);
