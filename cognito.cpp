@@ -22,11 +22,13 @@ bool allowMessagesToBeReceived = true;
 unsigned int keepAliveTimes[4];
 bool lightStatus[3];
 pthread_mutex_t katimes;
-unsigned int KEEPALIVE_TOLERANCE = 3;
+
+unsigned int KEEPALIVE_TOLERANCE = 4; // this one is tied to the following two quite closely. Balance button sluggishness vs delay.
+unsigned int KEEPALIVE_STANDOFF_TIME = 1;
+unsigned int KA_TURN_OFF_TIME_MILLIS = 1100000;
 unsigned int MD_STANDOFF_TIME = 1;
 unsigned int PB_STANDOFF_TIME = 1;
 unsigned int LS_STANDOFF_TIME = 1;
-unsigned int KEEPALIVE_STANDOFF_TIME = 2;
 unsigned int BLINK_STANDOFF = 2;
 unsigned int doNotHandleKeepAlivesUntil = 0;
 
@@ -259,70 +261,60 @@ void* listenForUdp(void* initialValue)
     recv_data_raw(sockfd, recv_buff, &recv_len, BUFFER_LEN, &client_addr, slen);
     if(allowMessagesToBeReceived)
     {
-      /* KDM Debug */
-      printf("received %d bytes: ", recv_len);
-      for(int i=0; i < recv_len; ++i)
-      {
-        printf("0x%02X ", recv_buff[i]);
-      }
-      printf("\n");
-      /**/
       if (recv_len > 1)
       {
-        // register a keep-alive
-        pthread_mutex_lock(&katimes);
-        keepAliveTimes[recv_buff[0] - 'A'] = std::time(0);
-        pthread_mutex_unlock(&katimes);
-
-        if (recv_buff[1] == '2')
-        { // Opcode 2, slew camera to node
-          doNotHandleKeepAlivesUntil = std::time(0) + BLINK_STANDOFF;
-          msg[0] = recv_buff[0];
-          printf("listen for UDP recieved a %c\n", msg[0]); // KDM
-
-          sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
-          system((std::string("echo -n \"") + recv_buff[0] + "2\" | sudo alfred -s 64").c_str());
-          // blink all lights in service in send mode
-          if(client_addr.sin_addr.s_addr == LOCALHOST)
-          {  // if it's from localhost
-            printf("recieved from %c\n",recv_buff[0]);
-            if(recv_buff[0] == 'A')
+        if(recv_buff[0] != '0')
+        {
+          // register a keep-alive
+          pthread_mutex_lock(&katimes);
+          keepAliveTimes[recv_buff[0] - 'A'] = std::time(0);
+          pthread_mutex_unlock(&katimes);
+          if (recv_buff[1] == '2' || recv_buff[1] == '3')
+          { // Opcode 2, slew camera to node
+            doNotHandleKeepAlivesUntil = std::time(0) + BLINK_STANDOFF;
+            msg[0] = recv_buff[0];
+            if(recv_buff[1] == '2')
             {
-              if(id == B)blink(EARLY_LED_A, EARLY_LED_B, GREEN_A, GREEN_B);
-              else if(id == C)blink(MIDDLE_LED_A, MIDDLE_LED_B, GREEN_A, GREEN_B);
-              else if(id == D)blink(LATE_LED_A, LATE_LED_B, GREEN_A, GREEN_B);
+              sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
             }
-            else if(recv_buff[0] == 'B')
-            {
-              if(id == C)blink(EARLY_LED_A, EARLY_LED_B, GREEN_A, GREEN_B);
-              else if(id == D)blink(MIDDLE_LED_A, MIDDLE_LED_B, GREEN_A, GREEN_B);
-              else if(id == A)blink(LATE_LED_A, LATE_LED_B, GREEN_A, GREEN_B);
+            // blink all lights in service in send mode
+            if(client_addr.sin_addr.s_addr == LOCALHOST)
+            {  // if it's from localhost
+              if(recv_buff[0] == 'A')
+              {
+                if(id == B)blink(EARLY_LED_A, EARLY_LED_B, GREEN_A, GREEN_B);
+                else if(id == C)blink(MIDDLE_LED_A, MIDDLE_LED_B, GREEN_A, GREEN_B);
+                else if(id == D)blink(LATE_LED_A, LATE_LED_B, GREEN_A, GREEN_B);
+              }
+              else if(recv_buff[0] == 'B')
+              {
+                if(id == C)blink(EARLY_LED_A, EARLY_LED_B, GREEN_A, GREEN_B);
+                else if(id == D)blink(MIDDLE_LED_A, MIDDLE_LED_B, GREEN_A, GREEN_B);
+                else if(id == A)blink(LATE_LED_A, LATE_LED_B, GREEN_A, GREEN_B);
+              }
+              else if(recv_buff[0] == 'C')
+              {
+                if(id == D)blink(EARLY_LED_A, EARLY_LED_B, GREEN_A, GREEN_B);
+                else if(id == A)blink(MIDDLE_LED_A, MIDDLE_LED_B, GREEN_A, GREEN_B);
+                else if(id == B)blink(LATE_LED_A, LATE_LED_B, GREEN_A, GREEN_B);
+              }
+              else if(recv_buff[0] == 'D')
+              {
+                if(id == C)blink(LATE_LED_A, LATE_LED_B, GREEN_A, GREEN_B);
+                else if(id == B)blink(MIDDLE_LED_A, MIDDLE_LED_B, GREEN_A, GREEN_B);
+                else if(id == A)blink(EARLY_LED_A, EARLY_LED_B, GREEN_A, GREEN_B);
+              }
             }
-            else if(recv_buff[0] == 'C')
-            {
-              if(id == D)blink(EARLY_LED_A, EARLY_LED_B, GREEN_A, GREEN_B);
-              else if(id == A)blink(MIDDLE_LED_A, MIDDLE_LED_B, GREEN_A, GREEN_B);
-              else if(id == B)blink(LATE_LED_A, LATE_LED_B, GREEN_A, GREEN_B);
-            }
-            else if(recv_buff[0] == 'D')
-            {
-              if(id == C)blink(EARLY_LED_A, EARLY_LED_B, GREEN_A, GREEN_B);
-              else if(id == B)blink(MIDDLE_LED_A, MIDDLE_LED_B, GREEN_A, GREEN_B);
-              else if(id == A)blink(LATE_LED_A, LATE_LED_B, GREEN_A, GREEN_B);
+            else
+            { // if it's from Android, inform rest of network
+              system("echo -n \"B3\" | sudo alfred -s 64");
+              blinkInService(GREEN_A, GREEN_B);
             }
           }
-          else
-          { // if it's from Android
-            blinkInService(GREEN_A, GREEN_B);
-          }
-        }
-      }
-      else
-      {
-        printf("Bad UDP message received\n");
-      }
-    }
-  }
+        } // if message is not a 0 to start with
+      } // if message is long enough
+    } // if(allowMessagesToBeReceived)
+  } // while thread is active
 }
 
 void setnetworkAndLights(networkState setting)
@@ -545,89 +537,125 @@ void* monitorPolling(void* initialValue)
     { // Motion detector
       if((currentTime - mdLastTriggered) > MD_STANDOFF_TIME)
       {
-        if(digitalRead(MOTION_SENSOR_DATA))
+        if (readValue == NETWORK_ON)
         {
-          mdLastTriggered = currentTime;
-          // Slew Camera
-          msg[0] = 'A';
-          sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
+          if(digitalRead(MOTION_SENSOR_DATA) || !digitalRead(BACKUP_MOTION_SENSOR_BUTTON))
+          {
+            mdLastTriggered = currentTime;
+            // Slew Camera
+            msg[0] = 'A';
+            sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
 
-          // Inform rest of network
-          system("echo -n \"A2\" | sudo alfred -s 64");
-          doNotHandleKeepAlivesUntil = std::time(0) + BLINK_STANDOFF;
-          blinkInService(GREEN_A, GREEN_B);
+            // Inform rest of network
+            system("echo -n \"A2\" | sudo alfred -s 64");
+            doNotHandleKeepAlivesUntil = std::time(0) + BLINK_STANDOFF;
+            blinkInService(GREEN_A, GREEN_B);
+          }
         }
       }
       if((currentTime - keepAliveLastTriggered) > KEEPALIVE_STANDOFF_TIME)
       {
-        // Send a keepalive
-        system("echo -n \"A1\" | sudo alfred -s 64");
         keepAliveLastTriggered = currentTime;
+        if (readValue == NETWORK_ON)
+        {
+          // Send a keepalive
+          system("echo -n \"A1\" | sudo alfred -s 64");
+          usleep(KA_TURN_OFF_TIME_MILLIS);
+          system("echo -n \"0\" | sudo alfred -s 64");
+        }
       }
     }
     else if(id == B)
     {
       if((currentTime - keepAliveLastTriggered) > KEEPALIVE_STANDOFF_TIME)
       {
-        // Send a keepalive
-        system("echo -n \"B1\" | sudo alfred -s 64");
         keepAliveLastTriggered = currentTime;
+        if (readValue == NETWORK_ON)
+        {
+          // Send a keepalive
+          system("echo -n \"B1\" | sudo alfred -s 64");
+          usleep(KA_TURN_OFF_TIME_MILLIS);
+          system("echo -n \"0\" | sudo alfred -s 64");
+        }
       }
     }
     else if(id == C)
     { // Button press
       if((currentTime - pbLastTriggered) > PB_STANDOFF_TIME)
       {
-        if(digitalRead(PUSHBUTTON_A))
+        if (readValue == NETWORK_ON)
         {
-          pbLastTriggered = currentTime;
-          // Slew Camera
-          msg[0] = 'C';
-          sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
-
-          // Inform rest of network
-          system("echo -n \"C2\" | sudo alfred -s 64");
-          doNotHandleKeepAlivesUntil = std::time(0) + BLINK_STANDOFF;
-          blinkInService(GREEN_A, GREEN_B);
-        }
-      }
-      if((currentTime - keepAliveLastTriggered) > KEEPALIVE_STANDOFF_TIME)
-      {
-        // Send a keepalive
-        system("echo -n \"C1\" | sudo alfred -s 64");
-        keepAliveLastTriggered = currentTime;
-      }
-    }
-    else if(id == D)
-    { // Light sensor
-      if((currentTime - lsLastTriggered) > LS_STANDOFF_TIME)
-      {
-        size_t len = 0;
-        ssize_t read;
-        char *line = NULL;
-        int num;
-        FILE* proc = popen("/home/pi/readAdc /dev/spidev0.0", "r");
-        if (proc)
-        {
-          read = getline(&line, &len, proc);
-          if (atoi(line) > 975)
+          if(digitalRead(PUSHBUTTON_A))
           {
+            pbLastTriggered = currentTime;
             // Slew Camera
-            msg[0] = 'D';
+            msg[0] = 'C';
             sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
+
             // Inform rest of network
-            system("echo -n \"D2\" | sudo alfred -s 64");
+            system("echo -n \"C2\" | sudo alfred -s 64");
             doNotHandleKeepAlivesUntil = std::time(0) + BLINK_STANDOFF;
             blinkInService(GREEN_A, GREEN_B);
           }
         }
       }
+      if((currentTime - keepAliveLastTriggered) > KEEPALIVE_STANDOFF_TIME)
+      {
+        keepAliveLastTriggered = currentTime;
+        if (readValue == NETWORK_ON)
+        {
+          // Send a keepalive
+          system("echo -n \"C1\" | sudo alfred -s 64");
+          usleep(KA_TURN_OFF_TIME_MILLIS);
+          system("echo -n \"0\" | sudo alfred -s 64");
+        }
+      }
     }
+    else if(id == D)
+    { // Light sensor
+      if (readValue == NETWORK_ON)
+      {
+        if((currentTime - lsLastTriggered) > LS_STANDOFF_TIME)
+        {
+          lsLastTriggered = currentTime;
+          size_t len = 0;
+          ssize_t read;
+          char *line = NULL;
+          int num;
+          FILE* proc = popen("/home/pi/readAdc /dev/spidev0.0", "r");
+          if (proc)
+          {
+            read = getline(&line, &len, proc);
+            if (atoi(line) > 945)
+            {
+              // Slew Camera
+              msg[0] = 'D';
+              sendto(sending_sockfd, msg, 1, 0, (struct sockaddr *)&sending_client_addr, sending_slen);
+              // Inform rest of network
+              system("echo -n \"D2\" | sudo alfred -s 64");
+              doNotHandleKeepAlivesUntil = std::time(0) + BLINK_STANDOFF;
+              blinkInService(GREEN_A, GREEN_B);
+            }
+          }
+        }
+      }
+      if((currentTime - keepAliveLastTriggered) > KEEPALIVE_STANDOFF_TIME)
+      {
+        keepAliveLastTriggered = currentTime;
+        if (readValue == NETWORK_ON)
+        {
+          // Send a keepalive
+          system("echo -n \"D1\" | sudo alfred -s 64");
+          usleep(KA_TURN_OFF_TIME_MILLIS);
+          system("echo -n \"0\" | sudo alfred -s 64");
+        }
+      }
+    }
+
     usleep(1000);
     readValue = (networkState)digitalRead(NETWORK_A);
   }
 }
-
 
 int main()
 {
@@ -641,7 +669,7 @@ int main()
   std::ifstream file("id.txt");
   std::getline(file, id);
   strncpy(id_msg, id.c_str(), 1); // stuff the ID into the variable
-  printf("id is %c\n",id_msg[0]); // KDM
+  printf("id is %c\n",id_msg[0]);
 
   wiringPiSetup();
   pinMode(EARLY_LED_A, OUTPUT);
@@ -651,6 +679,7 @@ int main()
   pinMode(LATE_LED_A, OUTPUT);
   pinMode(LATE_LED_B, OUTPUT);
   pinMode(PUSHBUTTON_A, INPUT);
+  pinMode(BACKUP_MOTION_SENSOR_BUTTON, INPUT);
 
   blinkAll(RED_A, RED_B);
   blinkAll(GREEN_A, GREEN_B);
@@ -661,6 +690,7 @@ int main()
   pullUpDnControl(NETWORK_A, PUD_UP);
   pullUpDnControl(PUSHBUTTON_A, PUD_UP);
   pullUpDnControl(LIGHT_SENSOR_B, PUD_UP);
+  pullUpDnControl(BACKUP_MOTION_SENSOR_BUTTON, PUD_UP);
 
   pthread_t pollingMonitor;
   pthread_create(&pollingMonitor, NULL, monitorPolling, &initialValue);

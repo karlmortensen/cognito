@@ -50,7 +50,8 @@ camera.getPTZPresetPointList().then(function(getPointList)
 			console.log('Oops! Running nothing');
 		}
 		camera.ptzGotoPresetPoint(pointToUse)
-		console.log(remote.address + ':' + remote.port +' - ' + message);
+        //console.log(remote.address + ':' + remote.port +' - ' + message);
+        console.log('Slewing to ' + message);
 	});
 
 server.bind(PORT, HOST);
